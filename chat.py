@@ -36,10 +36,7 @@ def extract_value(cell):
             if name in ('ul', 'ol', 'div'):
                 break
 
-            if isinstance(content, NavigableString):
-                text = str(content).strip()
-            else:
-                text = content.get_text(" ", strip=True)
+            text = content.get_text(" ", strip=True)
 
             if text:
                 parts.append(text)
