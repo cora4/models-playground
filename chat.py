@@ -13,6 +13,10 @@ from typing import Callable, Any
 import re
 
 def extract_value(cell):
+
+    for tag in cell.find_all(['style', 'script']):
+        tag.decompose()
+
     # Remove hidden elements and references
     for hidden in cell.find_all(
         'span',
@@ -154,8 +158,8 @@ def query_wikipedia(topic: str, lang: str) -> str:
 
                     tbody = infobox
 
-#                    print("DEBUG INFOBOX HTML:")
-#                    print(infobox.prettify())  # Pretty-prints the HTML
+                    print("DEBUG INFOBOX HTML:")
+                    print(infobox.prettify())  # Pretty-prints the HTML
 
                     rows = infobox.find('tbody').find_all('tr', recursive=False)
                     for row in rows:
@@ -316,10 +320,10 @@ tool_map = {
 tool_buffers = {}
 thinking_open = False
 first_turn = True
+interrupted = False
 
-try:
-  while True:
-
+#try:
+while True:
     if not first_turn:
 
     # ==========================
@@ -341,7 +345,7 @@ try:
     # ASSISTANT / TOOL LOOP
     # ==========================
     while True:
-
+      try:
         stream = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
@@ -486,10 +490,20 @@ try:
 
             # continue assistant/tool loop
             continue
+      except KeyboardInterrupt:
+          interrupted = True
 
-except KeyboardInterrupt:
+      if interrupted:
+          messages.append({
+              "role": "assistant",
+              "content": assistant_message["content"]
+          })
+          print("\n[generation interrupted]")
+          break  # leaves assistant loop, returns to user input
+
+#except KeyboardInterrupt:
     # User pressed Ctrl‑C – stop streaming without a traceback
-    print("\n[interrupted]")
-finally:
+#    print("\n[interrupted]")
+#finally:
     # Ensure the cursor ends on a new line even if no interrupt occurs
-    print()
+#    print()
