@@ -12,6 +12,48 @@ from bs4 import BeautifulSoup
 from typing import Callable, Any
 import re
 
+def extract_value(cell):
+    # Remove hidden elements and references
+    for hidden in cell.find_all(
+        'span',
+        {'style': lambda x: x and 'display: none' in x}
+    ):
+        hidden.decompose()
+
+    for sup in cell.find_all('sup'):
+        sup.decompose()
+
+    lis = cell.find_all('li')
+
+    # Special handling for cells containing lists
+    if lis:
+        parts = []
+
+        for content in cell.contents:
+            name = getattr(content, 'name', None)
+
+            # Stop when we reach the first list container
+            if name in ('ul', 'ol', 'div'):
+                break
+
+            if isinstance(content, NavigableString):
+                text = str(content).strip()
+            else:
+                text = content.get_text(" ", strip=True)
+
+            if text:
+                parts.append(text)
+
+        parts.extend(
+            li.get_text(" ", strip=True)
+            for li in lis
+        )
+
+        return " | ".join(parts)
+
+    # Normal infobox cell
+    return cell.get_text(" ", strip=True)
+
 def query_wikipedia(topic: str, lang: str) -> str:
     """
     Query summary from Wikipedia for a given topic.
@@ -65,7 +107,7 @@ def query_wikipedia(topic: str, lang: str) -> str:
         }
 
         # Actually wants browser
-        search_res = session.get(base_url, params=search_params)
+        search_res = session.get(base_url, params=search_params, impersonate="firefox")
 #        search_res = requests.get(base_url, params=search_params)
         search_res.raise_for_status()
         search_data = search_res.json()
@@ -112,8 +154,8 @@ def query_wikipedia(topic: str, lang: str) -> str:
 
                     tbody = infobox
 
-                    print("DEBUG INFOBOX HTML:")
-                    print(infobox.prettify())  # Pretty-prints the HTML
+#                    print("DEBUG INFOBOX HTML:")
+#                    print(infobox.prettify())  # Pretty-prints the HTML
 
                     rows = infobox.find('tbody').find_all('tr', recursive=False)
                     for row in rows:
@@ -132,58 +174,15 @@ def query_wikipedia(topic: str, lang: str) -> str:
                                 nested_td = nested_row.find('td')
 
                                 if nested_th and nested_td:
-
-                                    for hidden in nested_td.find_all('span', {'style': lambda x: x and 'display: none' in x}):
-                                        hidden.decompose()
-                                    for sup in nested_td.find_all('sup'):
-                                        sup.decompose()
-
+                                    value = extract_value(nested_td)
                                     key = nested_th.get_text(separator=' ', strip=True)
-#                                    value = nested_td.get_text(separator=' ', strip=True)
-
-                                    # Special handling for lists
-                                    lis = nested_td.find_all('li')
-                                    if lis:
-                                        parts = []
-
-                                        # Get direct text nodes before the list
-                                        for content in nested_td.contents:
-                                            if getattr(content, 'name', None) in ('ul', 'ol', 'div'):
-                                                break
-
-                                            if isinstance(content, str):
-                                                text = content.strip()
-                                                if text:
-                                                    parts.append(text)
-
-                                        parts.extend(
-                                            li.get_text(" ", strip=True)
-                                            for li in lis
-                                        )
-
-                                        value = " | ".join(parts)
-                                    else:
-                                        value = nested_td.get_text(" ", strip=True)
-
-
+#                                   value = nested_td.get_text(separator=' ', strip=True)
                                     infobox_text += f"{key}: {value}\n"
 
                         elif th and td:
-                            for hidden in td.find_all('span', {'style': lambda x: x and 'display: none' in x}):
-                                hidden.decompose()
-                            for sup in td.find_all('sup'):
-                                sup.decompose()
-
                             key = th.get_text(separator=' ', strip=True)
-#                            value = td.get_text(separator=' ', strip=True)
-                            if lis:
-                                value = " | ".join(
-                                    li.get_text(" ", strip=True)
-                                    for li in lis
-                                )
-                            else:
-                                value = td.get_text(" ", strip=True)
-
+                            value = extract_value(td)
+#                           value = td.get_text(separator=' ', strip=True)
                             infobox_text += f"{key}: {value}\n"
 
         except requests.exceptions.RequestException as e:
