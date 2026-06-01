@@ -14,18 +14,19 @@ import re
 
 def extract_value(cell):
 
-    for tag in cell.find_all(['style', 'script']):
-        tag.decompose()
+    for tag in cell.find_all():
+        if tag.find("wbr"):
+            tag.replace_with(''.join(tag.stripped_strings))
 
     # Remove hidden elements and references
+    for oth in cell.find_all(["sup", "style", "script"]):
+        oth.decompose()
+
     for hidden in cell.find_all(
         'span',
         {'style': lambda x: x and 'display: none' in x}
     ):
         hidden.decompose()
-
-    for sup in cell.find_all('sup'):
-        sup.decompose()
 
     lis = cell.find_all('li')
 
@@ -198,7 +199,7 @@ def query_wikipedia(topic: str, lang: str) -> str:
         final_result = ""
         if infobox_text:
             final_result += f"---\nINFOBOX:\n{infobox_text}"
-#            print(f"DEBUG STRING REPR: {repr(infobox_text)}\n\n")  # Shows \n as literal \n
+            print(f"DEBUG STRING REPR: {repr(infobox_text)}\n\n")  # Shows \n as literal \n
             print(f"INFOBOX:\n{infobox_text}\n")
 
         if extract:
