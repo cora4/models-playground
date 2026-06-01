@@ -1,11 +1,11 @@
 import json
 import sys
 
-def get_current_weather(location: str) -> str:
-    return "Hot"
+#def get_current_weather(location: str) -> str:
+#    return "Hot"
 
-def square_the_number(input_num: float) -> float:
-    return input_num ** 2
+#def square_the_number(input_num: float) -> float:
+#    return input_num ** 2
 
 import requests
 from bs4 import BeautifulSoup
@@ -36,6 +36,9 @@ def extract_value(cell):
             if name in ('ul', 'ol', 'div'):
                 break
 
+#            if isinstance(content, NavigableString):
+#                text = str(content).strip()
+#            else:
             text = content.get_text(" ", strip=True)
 
             if text:
@@ -104,7 +107,7 @@ def query_wikipedia(topic: str, lang: str) -> str:
         }
 
         # Actually wants browser
-        search_res = session.get(base_url, params=search_params, impersonate="firefox")
+        search_res = session.get(base_url, params=search_params)
 #        search_res = requests.get(base_url, params=search_params)
         search_res.raise_for_status()
         search_data = search_res.json()
@@ -305,175 +308,184 @@ tools=[{
     ]
 
 tool_map = {
-    "square_the_number": square_the_number,
-  "get_current_weather": get_current_weather,
+#    "square_the_number": square_the_number,
+#  "get_current_weather": get_current_weather,
       "query_wikipedia": query_wikipedia
 }
 
 tool_buffers = {}
 thinking_open = False
+first_turn = True
 
 try:
   while True:
 
-    stream = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=messages,
-        tools=tools,
-        stream=True
-    )
+    if not first_turn:
 
-    thinking_open = False
-    tool_buffers = {}
+    # ==========================
+    # USER TURN
+    # ==========================
+        user_input = input("\nYou: ")
 
-    assistant_message = {
-        "role": "assistant",
-        "content": "",
-        "tool_calls": []
-    }
-
-    finish_reason = None
-
-    # ==========================================
-    # STREAM LOOP
-    # ==========================================
-
-    for chunk in stream:
-
-        choice = chunk.choices[0]
-        delta = choice.delta
-
-        reasoning = getattr(delta, "reasoning_content", None)
-        content = getattr(delta, "content", None)
-        tool_calls = getattr(delta, "tool_calls", None)
-
-        if choice.finish_reason:
-            finish_reason = choice.finish_reason
-
-        # --------------------------------------
-        # reasoning
-        # --------------------------------------
-        if reasoning:
-
-            if not thinking_open:
-                print("[thinking: ", end="", flush=True)
-                thinking_open = True
-
-            print(reasoning, end="", flush=True)
-
-        # --------------------------------------
-        # assistant text
-        # --------------------------------------
-        if content:
-
-            if thinking_open:
-                print("]\n", flush=True)
-                thinking_open = False
-
-            assistant_message["content"] += content
-
-            print(content, end="", flush=True)
-
-        # --------------------------------------
-        # tool calls
-        # --------------------------------------
-        if tool_calls:
-
-            if thinking_open:
-                print("]\nCalling tool?", flush=True)
-                thinking_open = False
-
-            for tc in tool_calls:
-
-                index = tc.index
-
-                if index not in tool_buffers:
-                    tool_buffers[index] = {
-                        "id": "",
-                        "name": "",
-                        "arguments": ""
-                    }
-
-                if tc.id:
-                    tool_buffers[index]["id"] = tc.id
-
-                fn = tc.function
-
-                if fn.name:
-                    tool_buffers[index]["name"] = fn.name
-
-                if fn.arguments:
-                    tool_buffers[index]["arguments"] += fn.arguments
-
-    # ==========================================
-    # CLOSE THINKING BLOCK
-    # ==========================================
-    if thinking_open:
-        print("]")
-
-    # ==========================================
-    # NORMAL COMPLETION
-    # ==========================================
-    if finish_reason == "stop":
+        if user_input.lower() in {"quit", "exit"}:
+            break
 
         messages.append({
-            "role": "assistant",
-            "content": assistant_message["content"]
+            "role": "user",
+            "content": user_input
         })
 
-      # print("\n\n[done]")
-        break
+    first_turn = False
 
-    # ==========================================
-    # TOOL EXECUTION
-    # ==========================================
-    elif finish_reason == "tool_calls":
-      # print("=== TOOL CALLS ===")
-        for i, tool in tool_buffers.items():
-            print(f"\nTool #{i}")
-            print("Name:", tool["name"])
-            print("Arguments:")
-            print(tool["arguments"])
+    # ==========================
+    # ASSISTANT / TOOL LOOP
+    # ==========================
+    while True:
 
+        stream = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=messages,
+            tools=tools,
+            stream=True
+        )
 
+        tool_buffers = {}
+        thinking_open = False
 
-        # 1. build assistant tool-call message
-        assistant_tool_calls = []
-
-        for i, tool in tool_buffers.items():
-            assistant_tool_calls.append({
-                "id": tool["id"],
-                "type": "function",
-                "function": {
-                    "name": tool["name"],
-                    "arguments": tool["arguments"]
-                }
-            })
-
-        # 2. append ASSISTANT tool-call message FIRST
-        messages.append({
+        assistant_message = {
             "role": "assistant",
-            "content": None,
-            "tool_calls": assistant_tool_calls
-        })
+            "content": "",
+            "tool_calls": []
+        }
 
-        # 3. execute tools + append tool results
-        for i, tool in tool_buffers.items():
+        finish_reason = None
 
-            fn_name = tool["name"]
-            fn_args = json.loads(tool["arguments"])
+        # ==========================
+        # STREAM LOOP
+        # ==========================
+        for chunk in stream:
 
-            result = tool_map[fn_name](**fn_args)
+            choice = chunk.choices[0]
+            delta = choice.delta
+
+            reasoning = getattr(delta, "reasoning_content", None)
+            content = getattr(delta, "content", None)
+            tool_calls = getattr(delta, "tool_calls", None)
+
+            if choice.finish_reason:
+                finish_reason = choice.finish_reason
+
+            # ----------------------
+            # reasoning
+            # ----------------------
+            if reasoning:
+
+                if not thinking_open:
+                    print("[thinking: ", end="", flush=True)
+                    thinking_open = True
+
+                print(reasoning, end="", flush=True)
+
+            # ----------------------
+            # assistant text
+            # ----------------------
+            if content:
+
+                if thinking_open:
+                    print("]\n", flush=True)
+                    thinking_open = False
+
+                assistant_message["content"] += content
+
+                print(content, end="", flush=True)
+
+            # ----------------------
+            # tool calls
+            # ----------------------
+            if tool_calls:
+
+                if thinking_open:
+                    print("]\n", flush=True)
+                    thinking_open = False
+
+                for tc in tool_calls:
+
+                    index = tc.index
+
+                    if index not in tool_buffers:
+                        tool_buffers[index] = {
+                            "id": "",
+                            "name": "",
+                            "arguments": ""
+                        }
+
+                    if tc.id:
+                        tool_buffers[index]["id"] = tc.id
+
+                    fn = tc.function
+
+                    if fn.name:
+                        tool_buffers[index]["name"] = fn.name
+
+                    if fn.arguments:
+                        tool_buffers[index]["arguments"] += fn.arguments
+
+        if thinking_open:
+            print("]")
+
+        # ==========================
+        # FINAL ASSISTANT MESSAGE
+        # ==========================
+        if finish_reason == "stop":
 
             messages.append({
-                "role": "tool",
-                "tool_call_id": tool["id"],
-                "content": json.dumps(result)
+                "role": "assistant",
+                "content": assistant_message["content"]
             })
-        print("\n[tool completed]\n")
 
-#    elif finish_reason == "stop":
-#        print("\n\n[done]")
+            print()
+            break  # leave tool loop, return to user input
+
+        # ==========================
+        # TOOL EXECUTION
+        # ==========================
+        elif finish_reason == "tool_calls":
+
+            assistant_tool_calls = []
+
+            for tool in tool_buffers.values():
+                assistant_tool_calls.append({
+                    "id": tool["id"],
+                    "type": "function",
+                    "function": {
+                        "name": tool["name"],
+                        "arguments": tool["arguments"]
+                    }
+                })
+
+            messages.append({
+                "role": "assistant",
+                "content": None,
+                "tool_calls": assistant_tool_calls
+            })
+
+            for tool in tool_buffers.values():
+
+                fn_name = tool["name"]
+                fn_args = json.loads(tool["arguments"])
+
+                result = tool_map[fn_name](**fn_args)
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool["id"],
+                    "content": json.dumps(result)
+                })
+
+            print("\n[tool completed]\n")
+
+            # continue assistant/tool loop
+            continue
 
 except KeyboardInterrupt:
     # User pressed Ctrl‑C – stop streaming without a traceback
