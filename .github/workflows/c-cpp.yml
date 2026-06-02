@@ -21,8 +21,10 @@ jobs:
           intel-oneapi-mkl-devel=2025.0.1-14 \
           intel-oneapi-ccl-devel=2021.14.0-505 \
           intel-pti-dev=0.10.0-284
+        mkdir /tmp/oneapi/
+        cp /var/cache/apt/archives/*.deb /tmp/oneapi/
     - name: Upload Build Artifact
       uses: actions/upload-artifact@v6
       with:
         name: oneapi
-        path: /var/cache/apt/archives/
+        path: /tmp/oneapi/
