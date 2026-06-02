@@ -1,10 +1,7 @@
 name: Intel OneAPI build
 
 on:
-  push:
-    branches: [main, master]
-  pull_request:
-    branches: [main, master]
+  workflow_dispatch: # allows manual triggering
 jobs:
   build_intel_champ_fparser:
     runs-on: ubuntu-latest
