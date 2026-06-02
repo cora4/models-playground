@@ -1,0 +1,37 @@
+name: Intel OneAPI build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+jobs:
+  build_intel_champ_fparser:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash --noprofile --norc {0}
+    steps:
+    - uses: actions/checkout@v2
+    - name: setup repo
+      run: |
+        wget https://github.com/cora4/models-playground/releases/download/0/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
+        echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" | sudo tee /etc/apt/sources.list.d/oneAPI.list
+        sudo apt-get update
+    - name: install
+      run: |
+        sudo apt install -y intel-oneapi-dpcpp-cpp-2025.0=2025.0.4-1519 \
+          intel-oneapi-mkl-devel=2025.0.1-14 \
+          intel-oneapi-ccl-devel=2021.14.0-505 \
+          intel-pti-dev=0.10.0-284
+    - name: Compile
+      run: |
+        source /opt/intel/oneapi/setvars.sh
+        printenv >> $GITHUB_ENV
+        wget https://github.com/intel/intel-extension-for-pytorch/raw/v2.6.10%2Bxpu/scripts/compile_bundle.sh
+        bash compile_bundle.sh /opt/intel/oneapi dg1
+    - name: Upload Build Artifact
+      uses: actions/upload-artifact@v6
+      with:
+        name: oneapi
+        path: /opt/intel/oneapi
