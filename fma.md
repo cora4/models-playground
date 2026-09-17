@@ -1,9 +1,14 @@
+## Build Command
 ```bash
 gcc -O3 -mavx512f -mfma main.c fma_test.S -o fma_test
 ```
 
-main.c
-```
+---
+
+## Source Files  
+
+### `main.c`
+```c
 #include <stdint.h>
 #include <stdio.h>
 #include <x86intrin.h>
@@ -53,8 +58,8 @@ int main(void)
 }
 ```
 
-fma_test.S
-```c
+### `fma_test.S`
+```asm
 .intel_syntax noprefix
 
 .text
@@ -180,34 +185,25 @@ shuf_vec:
 .section .note.GNU-stack,"",@progbits
 ```
 
+---
+
+## Execution
 ```bash
 fma_test
 ```
 
-Tiger Lake
-```text
-FMA+shuffle: 22418 cycles
-FMA only:    22453 cycles
-ratio:       0.998
-1 FMA server
-```
+---
 
-Granite Rapids
-```text
-FMA+shuffle: 8066 cycles
-FMA only: 4054 cycles
-ratio: 1.990
-2 FMA server
-```
+## Expected Results  
 
-Ice Lake-SP
-```text
-FMA+shuffle: 10536 cycles
-FMA only:    5286 cycles
-ratio:       1.993
-2 FMA server
-```
+| Test | Output |
+|------|--------|
+| **Tiger Lake** | FMA+shuffle: 22418 cycles<br>FMA only:    22453 cycles<br>ratio:       0.998<br>1 FMA server |
+| **Granite Rapids** | FMA+shuffle: 8066 cycles<br>FMA only: 4054 cycles<br>ratio: 1.990<br>2 FMA server |
+| **Ice Lake-SP** | FMA+shuffle: 10536 cycles<br>FMA only:    5286 cycles<br>ratio:       1.993<br>2 FMA server |
+
 ***
+
 The key is that the assembly deliberately creates **12 independent FMA chains**, and the second test adds **12 `VPERMD` instructions**. Let's walk through the assembly piece by piece.
 
 ## 1. Function entry and calling convention
