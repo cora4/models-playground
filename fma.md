@@ -51,7 +51,7 @@ int main(void)
     printf("ratio:       %.3f\n",
            (double)shuf_min / (double)only_min);
 
-    printf("%d FMA server\n",
+    printf("%d FMA unit\n",
            ((double)shuf_min / (double)only_min < 1.5) ? 1 : 2);
 
     return 0;
@@ -198,9 +198,9 @@ fma_test
 
 | Test | Output |
 |------|--------|
-| **Tiger Lake** | FMA+shuffle: 22418 cycles<br>FMA only:    22453 cycles<br>ratio:       0.998<br>1 FMA server |
-| **Granite Rapids** | FMA+shuffle: 8066 cycles<br>FMA only: 4054 cycles<br>ratio: 1.990<br>2 FMA server |
-| **Ice Lake-SP** | FMA+shuffle: 10536 cycles<br>FMA only:    5286 cycles<br>ratio:       1.993<br>2 FMA server |
+| **Tiger Lake** | FMA+shuffle: 22418 cycles<br>FMA only:    22453 cycles<br>ratio:       0.998<br>1 FMA unit |
+| **Granite Rapids** | FMA+shuffle: 8066 cycles<br>FMA only: 4054 cycles<br>ratio: 1.990<br>2 FMA unit |
+| **Ice Lake-SP** | FMA+shuffle: 10536 cycles<br>FMA only:    5286 cycles<br>ratio:       1.993<br>2 FMA unit |
 
 ***
 
@@ -676,7 +676,7 @@ number_of_fma_units_per_core = 2
 and prints:
 
 ```text
-2 FMA server
+2 FMA unit
 ```
 
 ---
@@ -782,7 +782,7 @@ ratio = time B / time A
 Your two observed architectures give:
 
 ```text
-1-FMA-server CPU:
+1-FMA-unit CPU:
     A ≈ B
     ratio ≈ 1
 
