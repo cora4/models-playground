@@ -7,7 +7,6 @@ def render_list_item_content(li):
     """Render the non-list content of an <li> without destroying
     block-level whitespace such as fenced code blocks.
     """
-
     parts = []
 
     for child in li.children:
@@ -55,7 +54,7 @@ def render_list_item_content(li):
             if value.strip():
                 parts.append(value.strip())
 
-    return "\n\n".join(
+    return "\n".join(
         part for part in parts if part
     )
 
@@ -123,8 +122,8 @@ def inline_markdown(element):
 #    if tag == "code":
 #        return f"`{element.get_text()}`"
 
-    if tag == "br":
-        return "\n"
+#    if tag == "br":
+#        return "<br>"
 
     if tag == "code":
         content = element.get_text()
