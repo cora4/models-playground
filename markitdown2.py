@@ -214,29 +214,6 @@ def convert_assistant_links(soup):
         if links:
             container.replace_with("\n".join(links))
 
-    for button in soup.select(
-        "button[data-assistant-url-reference]"
-    ):
-        payload = button.get("data-assistant-sources-payload")
-
-        if not payload:
-            continue
-
-        try:
-            sources = json.loads(payload)
-        except (json.JSONDecodeError, TypeError):
-            continue
-
-        links = [
-            f"[{source['title']}]({strip_param(source['url'])})"
-            for source in sources
-            if source.get("title") and source.get("url")
-        ]
-
-        if links:
-            button.replace_with("\n".join(links))
-
-
 def convert_tables(soup):
     """Convert HTML tables to Markdown tables."""
     for container in soup.select(
