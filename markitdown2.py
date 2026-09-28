@@ -54,7 +54,7 @@ def render_list_item_content(li):
             if value.strip():
                 parts.append(value.strip())
 
-    return "\n".join(
+    return "\n\n".join(
         part for part in parts if part
     )
 
@@ -182,16 +182,12 @@ def convert_assistant_links(soup):
         button[data-assistant-url-reference]
     and:
         button[data-assistant-sources-payload]
-
-    For grouped source UI, the entire grouped container is replaced
-    with the Markdown link so the generated link is not subsequently
-    removed.
     """
+# .rstrip("?utm_source=chatgpt.com")
+    def strip_param(url):
+        return url.rstrip("?utm_source=chatgpt.com")
 
-    # First handle grouped source-reference containers.
-    for container in soup.select(
-        "[data-assistant-grouped-webpages]"
-    ):
+    for container in soup.select("[data-assistant-grouped-webpages]"):
         button = container.select_one(
             "button[data-assistant-sources-payload]"
         )
@@ -199,9 +195,7 @@ def convert_assistant_links(soup):
         if not button:
             continue
 
-        payload = button.get(
-            "data-assistant-sources-payload"
-        )
+        payload = button.get("data-assistant-sources-payload")
 
         if not payload:
             continue
@@ -211,28 +205,19 @@ def convert_assistant_links(soup):
         except (json.JSONDecodeError, TypeError):
             continue
 
-        if not sources:
-            continue
+        links = [
+            f"[{source['title']}]({strip_param(source['url'])})"
+            for source in sources
+            if source.get("title") and source.get("url")
+        ]
 
-        source = sources[0]
+        if links:
+            container.replace_with("\n".join(links))
 
-        title = source.get("title")
-        url = source.get("url").rstrip("?utm_source=chatgpt.com")
-
-        if not title or not url:
-            continue
-
-        container.replace_with(
-            f"[{title}]({url})"
-        )
-
-    # Handle non-grouped assistant source references.
     for button in soup.select(
         "button[data-assistant-url-reference]"
     ):
-        payload = button.get(
-            "data-assistant-sources-payload"
-        )
+        payload = button.get("data-assistant-sources-payload")
 
         if not payload:
             continue
@@ -242,26 +227,14 @@ def convert_assistant_links(soup):
         except (json.JSONDecodeError, TypeError):
             continue
 
-        if not sources:
-            continue
+        links = [
+            f"[{source['title']}]({strip_param(source['url'])})"
+            for source in sources
+            if source.get("title") and source.get("url")
+        ]
 
-        source = sources[0]
-
-        title = source.get("title")
-        url = source.get("url").rstrip("?utm_source=chatgpt.com")
-
-        if not title or not url:
-            continue
-
-        button.replace_with(
-            f"[{title}]({url})"
-        )
-
-    # Remove the redundant grouped source UI.
-    for element in soup.select(
-        "[data-assistant-grouped-webpages]"
-    ):
-        element.decompose()
+        if links:
+            button.replace_with("\n".join(links))
 
 
 def convert_tables(soup):
