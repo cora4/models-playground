@@ -178,14 +178,12 @@ def convert_assistant_links(soup):
     """
     Convert assistant source-reference buttons to Markdown links.
 
-    Handles both:
-        button[data-assistant-url-reference]
-    and:
+    Handles:
         button[data-assistant-sources-payload]
     """
 # .rstrip("?utm_source=chatgpt.com")
     def strip_param(url):
-        return url.rstrip("?utm_source=chatgpt.com")
+        return url.removesuffix("?utm_source=chatgpt.com")
 
     for container in soup.select("[data-assistant-grouped-webpages]"):
         button = container.select_one(
@@ -205,11 +203,18 @@ def convert_assistant_links(soup):
         except (json.JSONDecodeError, TypeError):
             continue
 
-        links = [
-            f"[{source['title']}]({strip_param(source['url'])})"
-            for source in sources
-            if source.get("title") and source.get("url")
-        ]
+        links = []
+
+        for source in sources:
+            url = strip_param(source.get("url"))
+            title = (
+                source.get("title")
+                or source.get("attribution")	
+                or url
+            )
+
+            if url:
+                links.append(f"[{title}]({url})")
 
         if links:
             container.replace_with("\n".join(links))
