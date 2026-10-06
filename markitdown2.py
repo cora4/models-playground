@@ -4,10 +4,20 @@ import sys
 from bs4 import BeautifulSoup, NavigableString, Tag, Comment
 
 def render_list_item_content(li):
-    """Render the non-list content of an <li> without destroying
-    block-level whitespace such as fenced code blocks.
+    """Render the non-list content of an <li>.
+
+    Inline content is kept together on the same line.
+    Block-level content such as fenced code blocks is separated.
     """
     parts = []
+    inline_parts = []
+
+    def flush_inline():
+        if inline_parts:
+            content = "".join(inline_parts).strip()
+            if content:
+                parts.append(content)
+            inline_parts.clear()
 
     for child in li.children:
         if isinstance(child, Tag):
@@ -15,6 +25,8 @@ def render_list_item_content(li):
                 continue
 
             if child.name == "pre":
+                flush_inline()
+
                 code = child.find("code")
 
                 if code:
@@ -38,25 +50,20 @@ def render_list_item_content(li):
                         + "\n```"
                     )
 
-            elif child.name == "p":
-                parts.append(
-                    inline_markdown(child).strip()
-                )
-
             else:
-                parts.append(
-                    inline_markdown(child)
-                )
+                # <code>, <strong>, <em>, <span>, <p>, etc.
+                inline_parts.append(inline_markdown(child))
 
         elif isinstance(child, NavigableString):
-            value = str(child)
+            # Preserve whitespace between inline elements, but ignore
+            # indentation/newlines around block content.
+            if child.strip():
+                inline_parts.append(str(child))
 
-            if value.strip():
-                parts.append(value.strip())
+    flush_inline()
 
-    return "\n\n".join(
-        part for part in parts if part
-    )
+    return "\n\n".join(parts)
+
 
 def clean_stream_markers(soup):
     """Remove streaming/commit marker comments."""
@@ -106,6 +113,21 @@ def inline_markdown(element):
         )
         return f"_{content}_"
 
+    if tag == "span":
+        content = "".join(
+            inline_markdown(child)
+            for child in element.children
+        )
+        # Only treat a span as a heading when it contains an SVG.
+        if element.find("svg") and element.find("path") is not None:
+            return f"### {content}"
+
+        classes = element.get("class", [])
+        if "font-semibold" in classes:
+            return f"**{content}**"
+
+        return content
+
     if tag == "a":
         content = "".join(
             inline_markdown(child)
@@ -118,12 +140,6 @@ def inline_markdown(element):
             return f"[{content}]({href})"
 
         return content
-
-#    if tag == "code":
-#        return f"`{element.get_text()}`"
-
-#    if tag == "br":
-#        return "<br>"
 
     if tag == "code":
         content = element.get_text()
@@ -174,9 +190,6 @@ def convert_math(soup):
 
         x.replace_with(replacement)
 
-def strip_param(url):
-    return url.removesuffix("?utm_source=chatgpt.com").removesuffix("&utm_source=chatgpt.com")
-
 def convert_assistant_links(soup):
     """
     Convert assistant source-reference buttons to Markdown links.
@@ -184,6 +197,9 @@ def convert_assistant_links(soup):
     Handles:
         button[data-assistant-sources-payload]
     """
+    def strip_param(url):
+        return url.removesuffix("?utm_source=chatgpt.com").removesuffix("&utm_source=chatgpt.com")
+
     for container in soup.select("[data-assistant-grouped-webpages]"):
         button = container.select_one(
             "button[data-assistant-sources-payload]"
@@ -582,7 +598,7 @@ def clean_output(text):
 
 def convert_paragraphs(soup):
     """Convert HTML paragraphs into separated Markdown paragraphs."""
-    for paragraph in soup.find_all("p"):
+    for paragraph in soup.find_all(["p", "span"]):
         if paragraph.find_parent(
             ["li", "blockquote", "table", "pre"]
         ):
