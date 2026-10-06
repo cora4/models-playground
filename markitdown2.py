@@ -237,89 +237,87 @@ def convert_assistant_links(soup):
 def convert_tables(soup):
     """Convert HTML tables to Markdown tables."""
     for container in soup.select(
-        "[data-assistant-markdown-table]"
+        "[data-assistant-markdown-table], "
+        "c-gov-view-your-payments[c-govviewyourpaymentscontainer_govviewyourpaymentscontainer]"
     ):
-        table = container.find("table")
+        for table in container.find_all("table"):
+            rows = []
 
-        if not table:
-            continue
+            for tr in table.find_all("tr"):
+                cells = tr.find_all(
+                    ["th", "td"],
+                    recursive=False,
+                )
 
-        rows = []
+                if not cells:
+                    continue
 
-        for tr in table.find_all("tr"):
-            cells = tr.find_all(
+                row = []
+
+                for cell in cells:
+                    text = inline_markdown(cell).strip()
+
+                    # Escape pipes because | has special meaning
+                    # inside Markdown tables.
+                    text = text.replace("|", r"\|")
+
+                    row.append(text)
+
+                rows.append(row)
+
+            if not rows:
+                continue
+
+            header = rows[0]
+            column_count = len(header)
+
+            # Preserve column alignment from the HTML header cells.
+            header_cells = table.find("tr").find_all(
                 ["th", "td"],
                 recursive=False,
             )
 
-            if not cells:
-                continue
+            alignments = []
+            for cell in header_cells:
+                style = cell.get("style", "")
+                alignments.append(
+                    "left" if "text-align: left" in style
+                    else "right" if "text-align: right" in style
+                    else "center" if "text-align: center" in style
+                    else None
+                )
 
-            row = []
+            alignment_markers = {
+                "left": ":---",
+                "center": ":---:",
+                "right": "---:",
+            }
 
-            for cell in cells:
-                text = inline_markdown(cell).strip()
+            markdown = [
+                "| " + " | ".join(header) + " |",
+                "| " + " | ".join(
+                    alignment_markers.get(alignment, "---")
+                    for alignment in alignments
+                ) + " |",
+            ]
 
-                # Escape pipes because | has special meaning
-                # inside Markdown tables.
-                text = text.replace("|", r"\|")
+            for row in rows[1:]:
+                row = row + [""] * (
+                    column_count - len(row)
+                )
 
-                row.append(text)
+                markdown.append(
+                    "| "
+                    + " | ".join(row[:column_count])
+                    + " |"
+                )
 
-            rows.append(row)
-
-        if not rows:
-            continue
-
-        header = rows[0]
-        column_count = len(header)
-
-        # Preserve column alignment from the HTML header cells.
-        header_cells = table.find("tr").find_all(
-            ["th", "td"],
-            recursive=False,
-        )
-
-        alignments = []
-        for cell in header_cells:
-            style = cell.get("style", "")
-            alignments.append(
-                "left" if "text-align: left" in style
-                else "right" if "text-align: right" in style
-                else "center" if "text-align: center" in style
-                else None
+            # IMPORTANT: replace the table, not the container.
+            table.replace_with(
+                "\n"
+                + "\n".join(markdown)
+                + "\n\n"
             )
-
-        alignment_markers = {
-            "left": ":---",
-            "center": ":---:",
-            "right": "---:",
-        }
-
-        markdown = [
-            "| " + " | ".join(header) + " |",
-            "| " + " | ".join(
-                alignment_markers.get(alignment, "---")
-                for alignment in alignments
-            ) + " |",
-        ]
-
-        for row in rows[1:]:
-            row = row + [""] * (
-                column_count - len(row)
-            )
-
-            markdown.append(
-                "| "
-                + " | ".join(row[:column_count])
-                + " |"
-            )
-
-        container.replace_with(
-            "\n"
-            + "\n".join(markdown)
-            + "\n\n"
-        )
 
 def render_list(list_element, depth=0):
     """
@@ -339,58 +337,77 @@ def render_list(list_element, depth=0):
     """
     ordered = list_element.name == "ol"
     lines = []
+    item_index = 0
 
-    direct_items = list_element.find_all(
-        "li",
-        recursive=False,
-    )
+    # Iterate over ALL direct children so that malformed-but-valid-in-
+    # BeautifulSoup HTML such as <ul><li>...</li><a>...</a></ul>
+    # doesn't lose the <a>.
+    for child in list_element.find_all(recursive=False):
 
-    for index, li in enumerate(direct_items, 1):
-        if ordered:
-            marker = f"{index}."
-        else:
-            marker = ["*", "+", "-"][depth % 3]
+        if child.name == "li":
+            item_index += 1
 
-        indentation = "  " * depth
+            if ordered:
+                marker = f"{item_index}."
+            else:
+                marker = ["*", "+", "-"][depth % 3]
 
-        text = render_list_item_content(li)
+            indentation = "  " * depth
 
-        text_lines = text.splitlines()
+            text = render_list_item_content(child)
+            text_lines = text.splitlines()
 
-        if not text_lines:
-            lines.append(
-                f"{indentation}{marker}"
+            if not text_lines:
+                lines.append(
+                    f"{indentation}{marker}"
+                )
+            else:
+                # First line.
+                lines.append(
+                    f"{indentation}{marker} {text_lines[0]}"
+                )
+
+                # Subsequent lines belong to this list item.
+                continuation_indent = indentation + "  "
+
+                for line in text_lines[1:]:
+                    if line:
+                        lines.append(
+                            continuation_indent + line
+                        )
+                    else:
+                        lines.append("")
+
+            # Nested lists.
+            nested_lists = child.find_all(
+                ["ul", "ol"],
+                recursive=False,
             )
-        else:
-            # First line.
-            lines.append(
-                f"{indentation}{marker} {text_lines[0]}"
-            )
 
-            # Every subsequent line belongs to this list item.
-            continuation_indent = indentation + "  "
-
-            for line in text_lines[1:]:
-                if line:
-                    lines.append(
-                        continuation_indent + line
+            for nested in nested_lists:
+                lines.extend(
+                    render_list(
+                        nested,
+                        depth=depth + 1,
                     )
-                else:
-                    lines.append("")
+                )
 
-        # Nested lists.
-        nested_lists = li.find_all(
-            ["ul", "ol"],
-            recursive=False,
-        )
-
-        for nested in nested_lists:
+        elif child.name in ("ul", "ol"):
+            # Handle a directly nested list if one exists.
             lines.extend(
                 render_list(
-                    nested,
+                    child,
                     depth=depth + 1,
                 )
             )
+
+        else:
+            # Preserve things such as:
+            # <a>View any student finance payments before 2018</a>
+            text = inline_markdown(child).strip()
+
+            if text:
+                lines.append(text)
 
     return lines
 
