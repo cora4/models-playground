@@ -174,6 +174,9 @@ def convert_math(soup):
 
         x.replace_with(replacement)
 
+def strip_param(url):
+    return url.removesuffix("?utm_source=chatgpt.com").removesuffix("&utm_source=chatgpt.com")
+
 def convert_assistant_links(soup):
     """
     Convert assistant source-reference buttons to Markdown links.
@@ -181,10 +184,6 @@ def convert_assistant_links(soup):
     Handles:
         button[data-assistant-sources-payload]
     """
-# .rstrip("?utm_source=chatgpt.com")
-    def strip_param(url):
-        return url.removesuffix("?utm_source=chatgpt.com")
-
     for container in soup.select("[data-assistant-grouped-webpages]"):
         button = container.select_one(
             "button[data-assistant-sources-payload]"
@@ -259,10 +258,33 @@ def convert_tables(soup):
         header = rows[0]
         column_count = len(header)
 
+        # Preserve column alignment from the HTML header cells.
+        header_cells = table.find("tr").find_all(
+            ["th", "td"],
+            recursive=False,
+        )
+
+        alignments = []
+        for cell in header_cells:
+            style = cell.get("style", "")
+            alignments.append(
+                "left" if "text-align: left" in style
+                else "right" if "text-align: right" in style
+                else "center" if "text-align: center" in style
+                else None
+            )
+
+        alignment_markers = {
+            "left": ":---",
+            "center": ":---:",
+            "right": "---:",
+        }
+
         markdown = [
             "| " + " | ".join(header) + " |",
             "| " + " | ".join(
-                ["---"] * column_count
+                alignment_markers.get(alignment, "---")
+                for alignment in alignments
             ) + " |",
         ]
 
