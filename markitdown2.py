@@ -190,16 +190,17 @@ def convert_math(soup):
 
         x.replace_with(replacement)
 
+def strip_param(url):
+    return url.removesuffix("?utm_source=chatgpt.com").removesuffix("&utm_source=chatgpt.com")
+
 def convert_assistant_links(soup):
     """
     Convert assistant source-reference buttons to Markdown links.
 
     Handles:
         button[data-assistant-sources-payload]
+        button[data-grouped-citations]
     """
-    def strip_param(url):
-        return url.removesuffix("?utm_source=chatgpt.com").removesuffix("&utm_source=chatgpt.com")
-
     for container in soup.select("[data-assistant-grouped-webpages]"):
         button = container.select_one(
             "button[data-assistant-sources-payload]"
@@ -209,7 +210,6 @@ def convert_assistant_links(soup):
             continue
 
         payload = button.get("data-assistant-sources-payload")
-
         if not payload:
             continue
 
@@ -224,7 +224,7 @@ def convert_assistant_links(soup):
             url = strip_param(source.get("url"))
             title = (
                 source.get("title")
-                or source.get("attribution")	
+                or source.get("attribution")
                 or url
             )
 
@@ -232,13 +232,67 @@ def convert_assistant_links(soup):
                 links.append(f"[{title}]({url})")
 
         if links:
-            container.replace_with("\n".join(links))
+            inside_table = button.find_parent("table") is not None
+            separator = "<br>" if inside_table else "\n"
+            prefix = " " if inside_table else ""
+
+            button.replace_with(
+                prefix + separator.join(links)
+            )
+
+    # button[data-grouped-citations]
+    for button in soup.select("button[data-grouped-citations]"):
+        payload = button.get("data-grouped-citations")
+
+        if not payload:
+            continue
+
+        try:
+            sources = json.loads(payload)
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+        links = []
+
+        for source in sources:
+            url = strip_param(source.get("url"))
+
+            if not url:
+                continue
+
+            # The first citation gets the descriptive text.
+            # Subsequent citations use the domain/name.
+            if not links:
+                title = button.get("aria-label", "")
+
+                # "Citation: openai — GPT-5 is here - OpenAI plus 1 more"
+                if " — " in title:
+                    title = title.split(" — ", 1)[1]
+                    title = title.split(" plus ", 1)[0]
+                else:
+                    title = source.get("name") or url
+
+            else:
+                title = source.get("name") or url
+
+            links.append(f"[{title}]({url})")
+
+        if links:
+            inside_table = button.find_parent("table") is not None
+            separator = "<br>" if inside_table else "\n"
+            prefix = " " if inside_table else ""
+
+            button.replace_with(
+                prefix + separator.join(links)
+            )
 
 def convert_tables(soup):
     """Convert HTML tables to Markdown tables."""
     for container in soup.select(
         "[data-assistant-markdown-table], "
-        "c-gov-view-your-payments[c-govviewyourpaymentscontainer_govviewyourpaymentscontainer]"
+        "c-gov-view-your-payments[c-govviewyourpaymentscontainer_govviewyourpaymentscontainer], "
+#        "div:has(> div > table)"
+        "div > div:has(> table)"
     ):
         for table in container.find_all("table"):
             rows = []
@@ -403,7 +457,7 @@ def render_list(list_element, depth=0):
 
         else:
             # Preserve things such as:
-            # <a>View any student finance payments before 2018</a>
+            # <a>...</a>
             text = inline_markdown(child).strip()
 
             if text:
@@ -601,7 +655,7 @@ def clean_output(text):
 
     for line in lines:
         # Only remove trailing whitespace.
-        line = line.rstrip()
+        line = line.rstrip().removeprefix(" ")
 
         if not line:
             if not blank:
