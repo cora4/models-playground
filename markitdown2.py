@@ -113,20 +113,20 @@ def inline_markdown(element):
         )
         return f"_{content}_"
 
-    if tag == "span":
-        content = "".join(
-            inline_markdown(child)
-            for child in element.children
-        )
+#    if tag == "span":
+#        content = "".join(
+#            inline_markdown(child)
+#            for child in element.children
+#        )
         # Only treat a span as a heading when it contains an SVG.
-        if element.find("svg") and element.find("path") is not None:
-            return f"### {content}"
+#        if element.find("svg") and element.find("path") is not None:
+#            return f"### {content}"
 
-        classes = element.get("class", [])
-        if "font-semibold" in classes:
-            return f"**{content}**"
+#        classes = element.get("class", [])
+#        if "font-semibold" in classes:
+#            return f"**{content}**"
 
-        return content
+#        return content
 
     if tag == "a":
         content = "".join(
@@ -201,7 +201,7 @@ def convert_assistant_links(soup):
         button[data-assistant-sources-payload]
         button[data-grouped-citations]
     """
-    for container in soup.select("[data-assistant-grouped-webpages]"):
+    for container in soup.select("[data-assistant-grouped-webpages]," "[data-assistant-reference-detail]"):
         button = container.select_one(
             "button[data-assistant-sources-payload]"
         )
@@ -538,75 +538,66 @@ def convert_headings(soup):
 
 def convert_code_blocks(soup):
     """
-    Convert <pre><code>...</code></pre> to fenced Markdown.
+    Convert HTML code blocks to fenced Markdown.
+
+    Supports:
+        - <pre><code>...</code></pre>
+        - bare <pre>...</pre>
+        - virtualized code editors using
+          data-virtualized-code-find-root and data-line-index
 
     Preserves:
         - code content
         - newlines
         - indentation
-        - language information from classes such as
-          language-python
+        - language information from classes such as language-python
+        - backticks inside code
 
     Example:
-
         <pre>
             <code class="language-python">
             print("hello")
             </code>
         </pre>
-
     becomes:
-
         ```python
         print("hello")
         ```
     """
-    for pre in soup.find_all("pre"):
-        code = pre.find("code")
 
-        if not code:
-            content = pre.get_text()
 
-            max_backticks = 0
-            current = 0
+def convert_code_blocks(soup):
+    """
+    Convert HTML code blocks to fenced Markdown.
 
-            for char in content:
-                if char == "`":
-                    current += 1
-                    max_backticks = max(
-                        max_backticks,
-                        current,
-                    )
-                else:
-                    current = 0
+    Supports:
+        - <pre><code>...</code></pre>
+        - bare <pre>...</pre>
+        - virtualized code editors using the structure:
+            <div aria-label="Code Preview">
+                <div tabindex="-1">
+                    <div data-testid="one-code-identity">
+                        <svg>...</svg>
+                        <span>C++</span>
+                    </div>
 
-            fence = "`" * max(
-                3,
-                max_backticks + 1,
-            )
+                    ...
 
-            markdown = (
-                f"\n{fence}\n"
-                f"{content.rstrip(chr(10))}\n"
-                f"{fence}\n"
-            )
+                    <div data-virtualized-code-find-root="true">
+                        <div data-line-index="0">...</div>
+                        <div data-line-index="1">...</div>
+                    </div>
+                </div>
+            </div>
 
-            pre.replace_with(markdown)
-            continue
-
-        content = code.get_text()
-
-        language = ""
-
-        for class_name in code.get("class", []):
-            if class_name.startswith("language-"):
-                language = class_name[
-                    len("language-"):
-                ]
-                break
-
-        # Find the longest consecutive run of backticks
-        # anywhere inside the code content.
+    Preserves:
+        - code content
+        - newlines
+        - indentation
+        - language information
+        - backticks inside code
+    """
+    def get_fence(content):
         max_backticks = 0
         current = 0
 
@@ -620,22 +611,145 @@ def convert_code_blocks(soup):
             else:
                 current = 0
 
-        # Markdown fenced code blocks require at least 3 backticks,
-        # and the fence must be longer than any backtick run inside
-        # the content.
-        fence = "`" * max(
+        return "`" * max(
             3,
             max_backticks + 1,
         )
 
-        markdown = (
+    def to_markdown(content, language=""):
+        fence = get_fence(content)
+
+        return (
             f"\n{fence}{language}\n"
             f"{content.rstrip(chr(10))}\n"
             f"{fence}\n"
         )
 
-        # Replace the entire <pre>, not merely <code>.
-        pre.replace_with(markdown)
+    def get_language_from_classes(element):
+        current = element
+
+        while current is not None:
+            for class_name in current.get("class", []):
+                if class_name.startswith("language-"):
+                    return class_name[len("language-"):]
+
+            current = current.parent
+
+        return ""
+
+    # ---------------------------------------------------------------
+    # Standard <pre> blocks
+    # ---------------------------------------------------------------
+
+    for pre in soup.find_all("pre"):
+        code = pre.find("code")
+
+        if code is None:
+            content = pre.get_text()
+
+            pre.replace_with(
+                to_markdown(content)
+            )
+            continue
+
+        content = code.get_text()
+        language = get_language_from_classes(code)
+
+        pre.replace_with(
+            to_markdown(
+                content,
+                language,
+            )
+        )
+
+    # ---------------------------------------------------------------
+    # Virtualized code editors
+    #
+    # Both the language identity and the virtualized editor are
+    # children of:
+    #
+    # <div aria-label="Code Preview">
+    # ---------------------------------------------------------------
+    for preview in soup.find_all(
+        attrs={"aria-label": "Code Preview"}
+    ):
+        # The actual code-block container is the descendant
+        # with tabindex="-1".
+        container = preview.find(
+            attrs={"tabindex": "-1"}
+        )
+
+        if container is None:
+            continue
+
+        root = container.find(
+            attrs={
+                "data-virtualized-code-find-root": True
+            }
+        )
+
+        if root is None:
+            continue
+
+        line_elements = root.find_all(
+            attrs={"data-line-index": True}
+        )
+
+        if not line_elements:
+            continue
+
+        lines = {}
+
+        for element in line_elements:
+            try:
+                index = int(
+                    element.get("data-line-index")
+                )
+            except (TypeError, ValueError):
+                continue
+
+            if index in lines:
+                continue
+
+            text = element.get_text()
+
+            # BeautifulSoup converts &nbsp; to \xa0.
+            text = text.replace("\xa0", " ")
+
+            lines[index] = text
+
+        if not lines:
+            continue
+
+        content = "\n".join(
+            lines[index]
+            for index in sorted(lines)
+        )
+
+        # The language and the virtualized editor are both
+        # descendants of the tabindex="-1" container.
+        language = ""
+
+        identity = container.find(
+            attrs={
+                "data-testid": "one-copilot-code-identity"
+            }
+        )
+
+        if identity is not None:
+            span = identity.find("span")
+
+            if span is not None:
+                language = span.get_text(
+                    strip=True
+                ).lower()
+
+        preview.replace_with(
+            to_markdown(
+                content,
+                language,
+            )
+        )
 
 def convert_horizontal_rules(soup):
     """Convert <hr> to Markdown horizontal rules."""
