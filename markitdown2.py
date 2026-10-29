@@ -1,84 +1,24 @@
-import json
-import sys
-
+import json, sys, re
 from bs4 import BeautifulSoup, NavigableString, Tag, Comment
-
-def render_list_item_content(li):
-    """Render the non-list content of an <li>.
-
-    Inline content is kept together on the same line.
-    Block-level content such as fenced code blocks is separated.
-    """
-    parts = []
-    inline_parts = []
-
-    def flush_inline():
-        if inline_parts:
-            content = "".join(inline_parts).strip()
-            if content:
-                parts.append(content)
-            inline_parts.clear()
-
-    for child in li.children:
-        if isinstance(child, Tag):
-            if child.name in ("ul", "ol"):
-                continue
-
-            if child.name == "pre":
-                flush_inline()
-
-                code = child.find("code")
-
-                if code:
-                    content = code.get_text()
-                    language = ""
-
-                    for class_name in code.get("class", []):
-                        if class_name.startswith("language-"):
-                            language = class_name[len("language-"):]
-                            break
-
-                    parts.append(
-                        f"```{language}\n"
-                        f"{content.rstrip(chr(10))}\n"
-                        f"```"
-                    )
-                else:
-                    parts.append(
-                        "```\n"
-                        + child.get_text().rstrip("\n")
-                        + "\n```"
-                    )
-
-            else:
-                # <code>, <strong>, <em>, <span>, <p>, etc.
-                inline_parts.append(inline_markdown(child))
-
-        elif isinstance(child, NavigableString):
-            # Preserve whitespace between inline elements, but ignore
-            # indentation/newlines around block content.
-            if child.strip():
-                inline_parts.append(str(child))
-
-    flush_inline()
-
-    return "\n\n".join(parts)
-
 
 def clean_stream_markers(soup):
     """Remove streaming/commit marker comments."""
     for comment in soup.find_all(
         string=lambda text: isinstance(text, Comment)
     ):
-        text = str(comment).strip()
+        if re.fullmatch(r"[/a-z-]*", str(comment).strip()):
+            comment.extract()
 
+        text = str(comment).strip()
         if (
             text.startswith("?marker ")
-            or text.startswith("?start ")
-            or text.startswith("?end")
+#            or text.startswith("?start ")
+#            or text.startswith("?end")
         ):
             comment.extract()
 
+def strip_param(url):
+    return url.removesuffix("?utm_source=chatgpt.com").removesuffix("&utm_source=chatgpt.com")
 
 def inline_markdown(element):
     """
@@ -128,13 +68,37 @@ def inline_markdown(element):
 
 #        return content
 
+    if tag == "span":
+        if (
+            element.get("data-d-component") == "text"
+            and (
+                element.has_attr("data-d-default-strong")
+                or (
+                    element.has_attr("data-d-inline")
+                    and "--x-color: var(--d-link-hover-color, var(--d-inherited-text-color, inherit));"
+                    in element.get("style", "")
+                )
+            )
+        ):
+            content = "".join(
+                inline_markdown(child)
+                for child in element.children
+            )
+            classes = element.get("class", [])
+
+            if "x1k4tb9n" in classes:
+                return f"*{content}*"
+
+#            if "x1s688f" in classes:
+            return f"**{content}**"
+
     if tag == "a":
         content = "".join(
             inline_markdown(child)
             for child in element.children
-        )
+        ).strip()
 
-        href = element.get("href")
+        href = strip_param(element.get("href"))
 
         if href:
             return f"[{content}]({href})"
@@ -168,11 +132,10 @@ def inline_markdown(element):
         for child in element.children
     )
 
-
 def convert_math(soup):
     """Convert rendered MathML/KaTeX to Markdown LaTeX."""
-    for x in soup.select("span[data-assistant-math-rendered]"):
-        annotation = x.find(
+    for math in soup.select("math"):
+        annotation = math.find(
             "annotation",
             attrs={"encoding": "application/x-tex"}
         )
@@ -181,17 +144,36 @@ def convert_math(soup):
             continue
 
         latex = annotation.get_text(strip=True)
-        kind = x.get("data-assistant-math-rendered")
+        is_display = math.get("display") == "block"
 
-        if kind == "display":
+        if is_display:
             replacement = f"\n$$\n{latex}\n$$\n"
         else:
             replacement = f"${latex}$"
 
-        x.replace_with(replacement)
+        # Prefer replacing the entire KaTeX rendering.
+        container = math.find_parent(
+            "span", class_="katex"
+        )
 
-def strip_param(url):
-    return url.removesuffix("?utm_source=chatgpt.com").removesuffix("&utm_source=chatgpt.com")
+        # Support other rendered math containers, if present.
+        if not container:
+            container = math.find_parent(
+                "div", attrs={"data-d-component": "math"}
+            )
+
+        if container:
+            # Remove the rendered HTML to avoid duplicate math text.
+#            katex_html = container.select_one(".katex-html")
+#            if katex_html:
+#                katex_html.decompose()
+
+            container.replace_with(
+                NavigableString(replacement)
+            )
+
+        else:
+            math.replace_with(NavigableString(replacement))
 
 def convert_assistant_links(soup):
     """
@@ -274,6 +256,7 @@ def convert_assistant_links(soup):
 
             else:
                 title = source.get("name") or url
+                title = f"*{title}*"
 
             links.append(f"[{title}]({url})")
 
@@ -290,9 +273,9 @@ def convert_tables(soup):
     """Convert HTML tables to Markdown tables."""
     for container in soup.select(
         "[data-assistant-markdown-table], "
-        "c-gov-view-your-payments[c-govviewyourpaymentscontainer_govviewyourpaymentscontainer], "
+        'div[data-d-component="table"]'
 #        "div:has(> div > table)"
-        "div > div:has(> table)"
+#        "div > div:has(> table)"
     ):
         for table in container.find_all("table"):
             rows = []
@@ -334,12 +317,31 @@ def convert_tables(soup):
             alignments = []
             for cell in header_cells:
                 style = cell.get("style", "")
-                alignments.append(
-                    "left" if "text-align: left" in style
-                    else "right" if "text-align: right" in style
-                    else "center" if "text-align: center" in style
-                    else None
-                )
+                classes = cell.get("class", [])
+                data_align = cell.get("data-d-align")
+
+                if data_align in ("start", "center", "end"):
+                    alignment = {
+                        "start": "left",
+                        "center": "center",
+                        "end": "right",
+                    }[data_align]
+                elif "text-align: left" in style:
+                    alignment = "left"
+                elif "text-align: center" in style:
+                    alignment = "center"
+                elif "text-align: right" in style:
+                    alignment = "right"
+                elif "x1yc453h" in classes:
+                    alignment = "left"  # text-align: start
+                elif "x2b8uid" in classes:
+                    alignment = "center"
+                elif "xp4054r" in classes:
+                    alignment = "right"  # text-align: end
+                else:
+                    alignment = None
+
+                alignments.append(alignment)
 
             alignment_markers = {
                 "left": ":---",
@@ -373,6 +375,56 @@ def convert_tables(soup):
                 + "\n\n"
             )
 
+
+def render_list_item_content(li):
+    """Render an <li>'s text without including nested lists."""
+    parts = []
+    inline_parts = []
+
+    def flush_inline():
+        if inline_parts:
+            content = "".join(inline_parts).strip()
+            if content:
+                parts.append(content)
+            inline_parts.clear()
+
+    def render_without_lists(node):
+        if isinstance(node, NavigableString):
+            return str(node)
+
+        if not isinstance(node, Tag):
+            return ""
+
+        if node.name in ("ul", "ol"):
+            return ""
+
+        if node.name == "pre":
+            return (
+                "\n\n```\n"
+                + node.get_text().rstrip("\n")
+                + "\n```\n\n"
+            )
+
+        # Preserve inline formatting when the subtree has no lists.
+        if not node.find(["ul", "ol"]):
+            return inline_markdown(node)
+
+        # A wrapper contains a nested list: render its children
+        # individually, omitting the list but keeping surrounding text.
+        return "".join(
+            render_without_lists(child)
+            for child in node.children
+        )
+
+    for child in li.children:
+        rendered = render_without_lists(child)
+        if rendered:
+            inline_parts.append(rendered)
+
+    flush_inline()
+    return "\n\n".join(parts)
+
+
 def render_list(list_element, depth=0):
     """
     Recursively render <ul>/<ol> while preserving list type.
@@ -391,75 +443,50 @@ def render_list(list_element, depth=0):
     """
     ordered = list_element.name == "ol"
     lines = []
-    item_index = 0
+    item_index = int(list_element.get("start", 1)) - 1
 
-    # Iterate over ALL direct children so that malformed-but-valid-in-
-    # BeautifulSoup HTML such as <ul><li>...</li><a>...</a></ul>
-    # doesn't lose the <a>.
     for child in list_element.find_all(recursive=False):
-
         if child.name == "li":
             item_index += 1
 
-            if ordered:
-                marker = f"{item_index}."
-            else:
-                marker = ["*", "+", "-"][depth % 3]
-
+            marker = (
+                f"{item_index}."
+                if ordered
+                else ["*", "+", "-"][depth % 3]
+            )
             indentation = "  " * depth
 
             text = render_list_item_content(child)
             text_lines = text.splitlines()
 
-            if not text_lines:
-                lines.append(
-                    f"{indentation}{marker}"
-                )
-            else:
-                # First line.
-                lines.append(
-                    f"{indentation}{marker} {text_lines[0]}"
-                )
-
-                # Subsequent lines belong to this list item.
-                continuation_indent = indentation + "  "
-
+            if text_lines:
+                lines.append(f"{indentation}{marker} {text_lines[0]}")
                 for line in text_lines[1:]:
-                    if line:
-                        lines.append(
-                            continuation_indent + line
-                        )
-                    else:
-                        lines.append("")
-
-            # Nested lists.
-            nested_lists = child.find_all(
-                ["ul", "ol"],
-                recursive=False,
-            )
-
-            for nested in nested_lists:
-                lines.extend(
-                    render_list(
-                        nested,
-                        depth=depth + 1,
+                    lines.append(
+                        f"{indentation}  {line}" if line else ""
                     )
-                )
+            else:
+                lines.append(f"{indentation}{marker}")
+
+            # Find nested lists anywhere inside wrapper elements,
+            # but do not descend into a nested list while searching.
+            def direct_nested_lists(item):
+                for node in item.children:
+                    if not isinstance(node, Tag):
+                        continue
+                    if node.name in ("ul", "ol"):
+                        yield node
+                    else:
+                        yield from direct_nested_lists(node)
+
+            for nested in direct_nested_lists(child):
+                lines.extend(render_list(nested, depth + 1))
 
         elif child.name in ("ul", "ol"):
-            # Handle a directly nested list if one exists.
-            lines.extend(
-                render_list(
-                    child,
-                    depth=depth + 1,
-                )
-            )
+            lines.extend(render_list(child, depth + 1))
 
         else:
-            # Preserve things such as:
-            # <a>...</a>
             text = inline_markdown(child).strip()
-
             if text:
                 lines.append(text)
 
@@ -492,7 +519,6 @@ def convert_lists(soup):
                 + "\n"
             )
         )
-
 
 def convert_blockquotes(soup):
     """Convert <blockquote>...</blockquote> to Markdown."""
@@ -535,37 +561,6 @@ def convert_headings(soup):
                 + "\n"
             )
 
-
-def convert_code_blocks(soup):
-    """
-    Convert HTML code blocks to fenced Markdown.
-
-    Supports:
-        - <pre><code>...</code></pre>
-        - bare <pre>...</pre>
-        - virtualized code editors using
-          data-virtualized-code-find-root and data-line-index
-
-    Preserves:
-        - code content
-        - newlines
-        - indentation
-        - language information from classes such as language-python
-        - backticks inside code
-
-    Example:
-        <pre>
-            <code class="language-python">
-            print("hello")
-            </code>
-        </pre>
-    becomes:
-        ```python
-        print("hello")
-        ```
-    """
-
-
 def convert_code_blocks(soup):
     """
     Convert HTML code blocks to fenced Markdown.
@@ -576,7 +571,7 @@ def convert_code_blocks(soup):
         - virtualized code editors using the structure:
             <div aria-label="Code Preview">
                 <div tabindex="-1">
-                    <div data-testid="one-code-identity">
+                    <div data-testid="one-copilot-code-identity">
                         <svg>...</svg>
                         <span>C++</span>
                     </div>
@@ -596,6 +591,21 @@ def convert_code_blocks(soup):
         - indentation
         - language information
         - backticks inside code
+
+    Example:
+        <pre>
+            <code class="language-python">
+            print("hello")
+            </code>
+        </pre>
+    becomes:
+        ```python
+        print("hello")
+        ```
+
+    Handles:
+      - HTML code components:
+        <section data-conversation-component="html-code">...</section>
     """
     def get_fence(content):
         max_backticks = 0
@@ -606,7 +616,7 @@ def convert_code_blocks(soup):
                 current += 1
                 max_backticks = max(
                     max_backticks,
-                    current,
+                    current
                 )
             else:
                 current = 0
@@ -637,30 +647,72 @@ def convert_code_blocks(soup):
 
         return ""
 
-    # ---------------------------------------------------------------
-    # Standard <pre> blocks
-    # ---------------------------------------------------------------
+    def get_language_from_previous_span(pre):
+        previous = pre.find_previous_sibling("span")
 
-    for pre in soup.find_all("pre"):
-        code = pre.find("code")
+        if previous is not None:
+            language = previous.get_text(strip=True)
+            previous.decompose()
+            if language:
+                return language
+
+        return ""
+
+    # Handle HTML code components first.
+    for section in reversed(
+        soup.select(
+'[data-conversation-component="html-code"], '
+'[data-assistant-writing-block], '
+'div > [data-code-block="true"]'
+    )
+    ):
+         if section.parent is None:
+             continue
+     
+         header = section.select_one(
+             ':scope > div[data-markdown-copy="exclude"]'
+         )
+     
+         language = ""
+         if header is not None:
+             label = header.select_one(
+#                 ':scope > div.min-w-0.flex-1'
+                 ':scope > div'
+             )
+             if label is not None:
+                 language = label.get_text(strip=True).lower()
+     
+         code = section.select_one("pre > code")
+         if code is None:
+             continue
+     
+         content = code.get_text()
+         section.replace_with(to_markdown(content, language))
+
+    # Handle standard <pre> blocks.
+    for pre in reversed(soup.find_all("pre")):
+        if pre.parent is None:
+            continue
+
+        code = pre.find("code", recursive=False)
 
         if code is None:
             content = pre.get_text()
+        else:
+            content = code.get_text()
 
-            pre.replace_with(
-                to_markdown(content)
-            )
-            continue
-
-        content = code.get_text()
-        language = get_language_from_classes(code)
-
-        pre.replace_with(
-            to_markdown(
-                content,
-                language,
-            )
+        language = (
+            get_language_from_classes(code)
+            if code is not None
+            else ""
         )
+
+        language = (
+            language
+            or get_language_from_previous_span(pre)
+        )
+
+        pre.replace_with(to_markdown(content, language))
 
     # ---------------------------------------------------------------
     # Virtualized code editors
@@ -756,7 +808,6 @@ def convert_horizontal_rules(soup):
     for hr in soup.find_all("hr"):
         hr.replace_with("\n---\n")
 
-
 def clean_output(text):
     """
     Clean excessive blank lines while preserving Markdown
@@ -769,7 +820,8 @@ def clean_output(text):
 
     for line in lines:
         # Only remove trailing whitespace.
-        line = line.rstrip().removeprefix(" ")
+        line = line.rstrip()
+#.removeprefix(" ")
 
         if not line:
             if not blank:
